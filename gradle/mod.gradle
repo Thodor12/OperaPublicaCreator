@@ -1342,6 +1342,9 @@ if (opc.isFeatureEnabled("crowdInTranslationManagement") && opc.hasPropertySet("
                 configurationSpec.getFile().set(file("gradle/crowdin.yml"))
                 configurationSpec.tokens.put("%crowdin_download_path%", opc.getProperty("crowdInDownloadDirectory"))
                 configurationSpec.tokens.put("%crowdin_version_path%", "version/${project.exactMinecraftVersion}")
+                if (opc.isFeatureEnabled("crowdInBranchSeparation")) {
+                    configurationSpec.tokens.put("%branch_name%", git.branch.name)
+                }
             }
         }
 
