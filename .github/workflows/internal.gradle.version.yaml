@@ -1,0 +1,94 @@
+name: "[Gradle] Determine Build Version"
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Which image to run the different tasks on (image must support bash)
+        type: string
+        required: true
+      version_file:
+        description: The file name/path where the version number is stored
+        type: string
+        required: true
+      version_suffix:
+        description: The version suffix
+        type: string
+        required: true
+      increment_version:
+        description: How to increment the version, or none if no version increment is necessary. One of 'major', 'minor', 'patch', 'prerelease' or 'none'.
+        type: string
+        required: true
+    outputs:
+      minecraft_version:
+        description: The minecraft version string
+        value: ${{ jobs.compute-version.outputs.minecraft_version }}
+      current_mod_version:
+        description: The current mod version string
+        value: ${{ jobs.compute-version.outputs.current_mod_version }}
+      current_full_version:
+        description: The current full version string
+        value: ${{ jobs.compute-version.outputs.current_full_version }}
+      next_mod_version:
+        description: The next mod version string
+        value: ${{ jobs.compute-version.outputs.next_mod_version }}
+      next_full_version:
+        description: The next full version string
+        value: ${{ jobs.compute-version.outputs.next_mod_version }}
+      release_text:
+        description: The text for the release version
+        value: ${{ jobs.compute-version.outputs.release_text }}
+
+permissions:
+  contents: read
+
+jobs:
+  compute-version:
+    runs-on: ${{ inputs.image }}
+    outputs:
+      minecraft_version: ${{ steps.getMinecraftVersion.outputs.version }}
+      current_mod_version: ${{ steps.getModVersion.outputs.version }}
+      current_full_version: ${{ steps.getMinecraftVersion.outputs.version }}-${{ steps.getModVersion.outputs.version }}
+      next_mod_version: ${{ steps.getNextModVersion.outputs.version }}
+      next_full_version: ${{ steps.getMinecraftVersion.outputs.version }}-${{ steps.getNextModVersion.outputs.version }}
+      release_text: ${{ steps.generateReleaseText.outputs.release_text }}
+    steps:
+      - name: "📦 Checkout"
+        uses: actions/checkout@v4
+
+      - id: getMinecraftVersion
+        name: "⚙️ Generate Minecraft version"
+        run: |
+          version=$(cat gradle.properties | grep exactMinecraftVersion | cut -d "=" -f 2)
+          echo "Minecraft version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - id: getModVersion
+        name: "⚙️ Get mod version"
+        run: |
+          version=$(cat ${{ inputs.version_file }})
+          echo "Current mod version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - id: generateModVersion
+        name: "⚙️ Generate next mod version"
+        uses: cbrgm/semver-bump-action@v1.0.43
+        if: ${{ inputs.increment_version != 'none'}}
+        with:
+          current-version: ${{ steps.getModVersion.outputs.version }}
+          bump-level: ${{ inputs.increment_version }}
+          prerelease-tag: ${{ inputs.version_suffix }}
+
+      - id: getNextModVersion
+        name: "⚙️ Get next mod version"
+        run: |
+          version=${{ steps.generateModVersion.conclusion != 'skipped' && steps.generateModVersion.outputs.new_version || steps.getModVersion.outputs.version }}
+          echo "Next mod version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - id: generateReleaseText
+        name: "⚙️ Generate release text"
+        run: |
+          release_text="Version ${{ steps.getNextModVersion.outputs.version }} for Minecraft ${{ steps.getMinecraftVersion.outputs.version }}"
+          echo "Release text: $release_text"
+          echo "release_text=$release_text" >> "$GITHUB_OUTPUT"
