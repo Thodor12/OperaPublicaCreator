@@ -55,4 +55,4 @@ jobs:
         uses: actions/checkout@v4
 
       - name: "🚀 Trigger release workflows"
-        run: gh workflow run ${{ inputs.release_yaml_file }} -f type=release -r ${{ matrix.branch }}
+        run: gh workflow run ${{ inputs.release_yaml_file }} -r ${{ matrix.branch }}

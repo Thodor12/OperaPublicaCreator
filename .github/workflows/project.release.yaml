@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: beta
+      increment_version:
+        description: How to increment the version, or none if no version increment is necessary. One of 'major', 'minor', 'patch' or 'none'.
+        type: string
+        required: false
+        default: patch
     secrets:
       DISCORD_WEBHOOK:
         required: true
@@ -73,7 +78,7 @@ jobs:
       image: ${{ inputs.image }}
       version_file: ${{ inputs.version_file }}
       version_suffix: ${{ needs.generate-release-information.outputs.release_version_suffix }}
-      increment_version: patch
+      increment_version: ${{ inputs.increment_version }}
 
   notify-build-start:
     needs:
@@ -155,6 +160,9 @@ jobs:
     needs:
       - release
       - compute-version
+    concurrency:
+      group: ${{ github.ref }}
+      cancel-in-progress: true
     uses: ./.github/workflows/internal.gradle.publish.yaml
     with:
       image: ${{ inputs.image }}
