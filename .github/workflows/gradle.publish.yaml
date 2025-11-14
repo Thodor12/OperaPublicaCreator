@@ -1,0 +1,211 @@
+# Based off https://github.com/MinecraftForge/SharedActions/blob/main/.github/workflows/gradle.yml
+name: Gradle Publishing CI
+
+on:
+  workflow_call:
+    inputs:
+      java:
+        description: "The version of Java to use to run Gradle"
+        required: false
+        type: string
+        default: "21"
+      gradle_tasks:
+        description: "The Gradle task(s) to run at publication"
+        required: false
+        type: string
+        default: "publish"
+      curse_release_type:
+        description: "The type of release to publish to CurseForge"
+        required: false
+        type: string
+        default: "beta"
+      changelog_max_issues:
+        description: "The maximum number of issues to include in the changelog"
+        required: false
+        type: number
+        default: 100
+    secrets:
+      DISCORD_WEBHOOK:
+        required: true
+      MAVEN_USER:
+        required: true
+      MAVEN_PASSWORD:
+        required: true
+      CURSE_API_KEY:
+        required: true
+      CROWDIN_API_KEY:
+        required: true
+      GRADLE_ENCRYPTION_KEY:
+        description: The AES key to enable Gradle cache encryption
+        required: true
+
+permissions:
+  contents: write
+  statuses: write
+
+jobs:
+  generate-release-information:
+    name: "Generate release information"
+    runs-on: ubuntu-latest
+    outputs:
+      release_version_suffix: ${{ steps.generateReleaseSuffix.outputs.release_version_suffix }}
+    steps:
+      - id: generateReleaseSuffix
+        name: "Generate release suffix"
+        run: |
+          release_version_suffix="alpha"
+          if [[ ${{ inputs.curse_release_type }} == release ]]; then
+            release_version_suffix=""
+          elif [[ ${{ inputs.curse_release_type }} == beta ]]; then
+            release_version_suffix="snapshot"
+          fi
+          echo "Release version suffix: ${release_version_suffix}"
+          echo "release_version_suffix=${release_version_suffix}" >> "$GITHUB_OUTPUT"
+
+  compute-version:
+    needs: ["generate-release-information"]
+    uses: ldtteam/operapublicacreator/.github/workflows/gradle.version.yaml@main
+    with:
+      suffix: ${{ needs.generate-release-information.outputs.release_version_suffix }}
+
+  notify-build-start:
+    needs: ["compute-version"]
+    name: "🔴 Build notifications (start)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: neoforged/action-webhooks@v1
+        name: "🔴 Send Discord start notification"
+        with:
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK }}
+          status: "started"
+          version: "${{ needs.compute-version.outputs.full_version }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: neoforged/action-github-status@v1
+        name: "🚧 Set pending status"
+        with:
+          authToken: ${{secrets.GITHUB_TOKEN}}
+          context: "Publishing"
+          state: "pending"
+          description: ${{ needs.compute-version.outputs.release_text }}
+          target_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  gradle:
+    needs: ["compute-version"]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - id: checkout
+        name: "📦 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1000
+          fetch-tags: true
+
+      - name: Fetch tags # See https://github.com/actions/checkout/issues/2041
+        run: git fetch --tags
+
+      - id: setupJava
+        name: "🔧 Setup Java"
+        run: |
+          echo "JAVA_HOME=$(echo $JAVA_HOME_${{ inputs.java }}_X64)" >> "$GITHUB_ENV"
+
+      - id: setupGradle
+        name: "🔧 Setup Gradle"
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: wrapper
+          dependency-graph: ${{ runner.debug == '1' && 'generate-and-upload' || 'generate-and-submit' }}
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+          build-scan-publish: ${{ runner.debug == '1' && 'true' || 'false' }}
+          build-scan-terms-of-use-url: "https://gradle.com/terms-of-service"
+          build-scan-terms-of-use-agree: "yes"
+
+      - id: getPreviousTag
+        name: "📝 Get previous tag"
+        run: |
+          previous_tag=$(git describe --abbrev=0 --tags $(git rev-list --tags=${{ github.ref_name }} --max-count=1))
+          echo "Previous tag: ${previous_tag}"
+          echo "previous_tag=${previous_tag}" >> "$GITHUB_OUTPUT"
+
+      - id: tagLocalBuild
+        name: "🏷️ Tag local build"
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "maintainer+github@ldtteam.com"
+          git tag -f -a "${{ needs.compute-version.outputs.tag_version }}" -m "${{ needs.compute-version.outputs.release_text }}"
+
+      - id: generateReleaseChangelog
+        name: "📝 Generate release changelog"
+        run: |
+          echo "# Changelog" > changelog.md
+          echo "" >> changelog.md
+          echo "[Full Changelog](${{ github.server_url }}/${{ github.repository }}/compare/${{ steps.getPreviousTag.outputs.previous_tag }}..${{ needs.compute-version.outputs.tag_version }})" >> changelog.md
+          echo "" >> changelog.md
+          ./gradlew --build-cache outputChangelogHeader -PmodVersion=${{ needs.compute-version.outputs.mod_version }} -PmodVersionSuffix=${{ needs.compute-version.outputs.suffix }}
+          echo "### Commits:" >> changelog.md
+          echo "" >> changelog.md
+          echo "$(git log --pretty=format:"- %s ([commit](${{ github.server_url }}/${{ github.repository }}/commit/%H))" ${{ steps.getPreviousTag.outputs.previous_tag }}..${{ needs.compute-version.outputs.tag_version }})" >> changelog.md
+          echo "" >> changelog.md
+          ./gradlew --build-cache outputChangelogFooter -PmodVersion=${{ needs.compute-version.outputs.mod_version }} -PmodVersionSuffix=${{ needs.compute-version.outputs.suffix }}
+          sed -i -E "s|\(#([[:digit:]]+)\)|([#\1](${{ github.server_url }}/${{ github.repository }}/pull/\1))|" changelog.md
+          echo "Outputting full changelog"
+          cat changelog.md
+
+      - id: publish
+        name: "🚀 Publish"
+        run: |
+          if [[ "${{ runner.debug }}" == "1" ]]; then
+            ./gradlew --build-cache ${{ inputs.gradle_tasks }} -PmodVersion=${{ needs.compute-version.outputs.mod_version }} -PmodVersionSuffix=${{ needs.compute-version.outputs.suffix }} --stacktrace --info --scan --warning-mode all
+          else
+            ./gradlew --build-cache ${{ inputs.gradle_tasks }} -PmodVersion=${{ needs.compute-version.outputs.mod_version }} -PmodVersionSuffix=${{ needs.compute-version.outputs.suffix }}
+          fi
+        env:
+          LDTTeamJfrogUsername: ${{ secrets.MAVEN_USER }}
+          LDTTeamJfrogPassword: ${{ secrets.MAVEN_PASSWORD }}
+          CURSE_API_KEY: ${{ secrets.CURSE_API_KEY }}
+          CURSE_RELEASE_TYPE: ${{ inputs.curse_release_type }}
+          CROWD_IN_API_KEY: ${{ secrets.CROWDIN_API_KEY }}
+
+      - name: "🚀 Create GitHub release"
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.compute-version.outputs.tag_version }}
+          release_name: ${{ needs.compute-version.outputs.release_text }}
+          body_path: changelog.md
+          prerelease: ${{ inputs.curse_release_type != 'release' }}
+
+      - name: Upload build reports
+        uses: actions/upload-artifact@v4
+        if: ${{ runner.debug == '1' }}
+        with:
+          name: build-reports
+          path: "**/build/reports/"
+
+  notify-build-end:
+    needs: ["compute-version", "notify-build-start", "gradle"]
+    name: "🔴 Build notifications (end)"
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: neoforged/action-webhooks@v1
+        name: "🔴 Send Discord end notification"
+        with:
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK }}
+          status: ${{ needs.gradle.result }}
+          version: "${{ needs.compute-version.outputs.full_version }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: neoforged/action-github-status@v1
+        name: "🚧 Set build status"
+        with:
+          authToken: ${{ secrets.GITHUB_TOKEN }}
+          context: "Publishing"
+          state: ${{ needs.gradle.result }}
+          description: ${{ needs.compute-version.outputs.release_text }}
+          target_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
