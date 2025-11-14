@@ -13,16 +13,11 @@ on:
         type: string
         required: false
         default: "21"
-      version_file:
-        description: The file name/path where the version number is stored
-        type: string
-        required: false
-        default: VERSION.txt
       version_suffix:
-        description: The suffix to put behind the branch, defaults to the branch name
+        description: The suffix to put behind the branch, defaults to the pull request number. If not a pull request you must define this by hand.
         type: string
         required: false
-        default: ${{ github.ref_name }}
+        default: ${{ github.event.number }}
       create_prerelease:
         description: Whether to make a prerelease version or not
         type: boolean
@@ -47,27 +42,23 @@ permissions:
   contents: read
 
 jobs:
-  generate-build-information:
+  validate-inputs:
     runs-on: ${{ inputs.image }}
-    outputs:
-      version_suffix: ${{ steps.computeBranchSuffix.outputs.version_suffix }}
+    if: |
+      (inputs.image == '') ||
+      (inputs.java <= 0) ||
+      (inputs.version_suffix == '') ||
+      (inputs.gradle_build_task == '') &&
+      (inputs.gradle_publish_task == '')
     steps:
-      - id: computeBranchSuffix
-        name: "⚙️ Compute branch suffix"
-        run: |
-          cleanedSuffix=$(echo ${{ inputs.version_suffix }} | sed 's/[^a-zA-Z0-9]/-/g')
-          echo "Cleaned suffix: $cleanedSuffix"
-          echo "version_suffix=$cleanedSuffix" >> "$GITHUB_OUTPUT"
+      - run: exit 1
 
   compute-version:
-    needs:
-      - generate-build-information
     uses: ./.github/workflows/internal.gradle.version.yaml
     with:
       image: ${{ inputs.image }}
-      version_file: ${{ inputs.version_file }}
-      version_suffix: ${{ needs.generate-build-information.outputs.version_suffix }}-rc
-      increment_version: ${{ inputs.create_prerelease && 'prerelease' || 'none' }}
+      version_suffix: ${{ inputs.version_suffix }}-rc
+      increment_version: ${{ inputs.create_prerelease && 'prepatch' || 'none' }}
     secrets: inherit
 
   build:

@@ -7,16 +7,12 @@ on:
         description: Which image to run the different tasks on (image must support bash)
         type: string
         required: true
-      version_file:
-        description: The file name/path where the version number is stored
-        type: string
-        required: true
       version_suffix:
         description: The version suffix
         type: string
         required: true
       increment_version:
-        description: How to increment the version, or none if no version increment is necessary. One of 'major', 'minor', 'patch', 'prerelease' or 'none'.
+        description: How to increment the version, or none if no version increment is necessary
         type: string
         required: true
     outputs:
@@ -26,18 +22,24 @@ on:
       current_mod_version:
         description: The current mod version string
         value: ${{ jobs.compute-version.outputs.current_mod_version }}
+      current_tag_version:
+        description: The current tag version string
+        value: ${{ jobs.compute-version.outputs.current_tag_version }}
       current_full_version:
         description: The current full version string
         value: ${{ jobs.compute-version.outputs.current_full_version }}
+      next_tag_version:
+        description: The next tag version string
+        value: ${{ jobs.compute-version.outputs.next_tag_version }}
       next_mod_version:
         description: The next mod version string
         value: ${{ jobs.compute-version.outputs.next_mod_version }}
       next_full_version:
         description: The next full version string
         value: ${{ jobs.compute-version.outputs.next_mod_version }}
-      release_text:
-        description: The text for the release version
-        value: ${{ jobs.compute-version.outputs.release_text }}
+      release_name:
+        description: The name for the release version
+        value: ${{ jobs.compute-version.outputs.release_name }}
 
 permissions:
   contents: read
@@ -48,13 +50,28 @@ jobs:
     outputs:
       minecraft_version: ${{ steps.getMinecraftVersion.outputs.version }}
       current_mod_version: ${{ steps.getModVersion.outputs.version }}
-      current_full_version: ${{ steps.getMinecraftVersion.outputs.version }}-${{ steps.getModVersion.outputs.version }}
+      current_tag_version: v${{ steps.getMinecraftVersion.outputs.version }}-${{ steps.getModVersion.outputs.version }}
+      current_full_version: ${{ steps.generateFullVersion.outputs.current_full_version }}
       next_mod_version: ${{ steps.getNextModVersion.outputs.version }}
-      next_full_version: ${{ steps.getMinecraftVersion.outputs.version }}-${{ steps.getNextModVersion.outputs.version }}
-      release_text: ${{ steps.generateReleaseText.outputs.release_text }}
+      next_tag_version: v${{ steps.getMinecraftVersion.outputs.version }}-${{ steps.getNextModVersion.outputs.version }}
+      next_full_version: ${{ steps.generateFullVersion.outputs.next_full_version }}
+      release_name: ${{ steps.generateReleaseName.outputs.release_name }}
     steps:
       - name: "📦 Checkout"
         uses: actions/checkout@v4
+
+      - name: "📦 Fetch tags" # See https://github.com/actions/checkout/issues/2041
+        run: git fetch --tags
+
+      - id: getVersionOrdering
+        name: "⚙️ Get version ordering"
+        run: |
+          uses_mc_version_order_first=$(cat gradle.properties | grep usesMCVersionOrderFirst | cut -d "=" -f 2)
+          if [ -z "$uses_mc_version_order_first" ]; then
+            uses_mc_version_order_first=false
+          fi
+          echo "Using MC version order first: $uses_mc_version_order_first"
+          echo "uses_mc_version_order_first=$uses_mc_version_order_first" >> "$GITHUB_OUTPUT"
 
       - id: getMinecraftVersion
         name: "⚙️ Generate Minecraft version"
@@ -66,7 +83,7 @@ jobs:
       - id: getModVersion
         name: "⚙️ Get mod version"
         run: |
-          version=$(cat ${{ inputs.version_file }})
+          version=$(git describe --abbrev=0 --tags $(git rev-list --tags=${{ github.ref_name }} --max-count=1) | sed s/v${{ steps.getMinecraftVersion.outputs.version }}-//)
           echo "Current mod version: $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -77,7 +94,6 @@ jobs:
         with:
           current-version: ${{ steps.getModVersion.outputs.version }}
           bump-level: ${{ inputs.increment_version }}
-          prerelease-tag: ${{ inputs.version_suffix }}
 
       - id: getNextModVersion
         name: "⚙️ Get next mod version"
@@ -85,10 +101,39 @@ jobs:
           version=${{ steps.generateModVersion.conclusion != 'skipped' && steps.generateModVersion.outputs.new_version || steps.getModVersion.outputs.version }}
           echo "Next mod version: $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          - id: generateFullVersion
 
-      - id: generateReleaseText
-        name: "⚙️ Generate release text"
+      - id: generateFullVersion
+        name: "Generate full version"
         run: |
-          release_text="Version ${{ steps.getNextModVersion.outputs.version }} for Minecraft ${{ steps.getMinecraftVersion.outputs.version }}"
-          echo "Release text: $release_text"
-          echo "release_text=$release_text" >> "$GITHUB_OUTPUT"
+          if [[ -n "${{inputs.version_suffix}}" ]]
+          then
+            if [ ${{ steps.getVersionOrdering.outputs.uses_mc_version_order_first }} == "true" ] 
+            then
+              current_full_version="${{ steps.getMinecraftVersion.outputs.version }}-${{ steps.getModVersion.outputs.version }}-${{ inputs.version_suffix }}"
+              next_full_version="${{ steps.getMinecraftVersion.outputs.version }}-${{ steps.getNextModVersion.outputs.version }}-${{ inputs.version_suffix }}"
+            else
+              current_full_version="${{ steps.getModVersion.outputs.version }}-${{ steps.getMinecraftVersion.outputs.minecraft_version }}-${{ inputs.version_suffix }}"
+              next_full_version="${{ steps.getNextModVersion.outputs.version }}-${{ steps.getMinecraftVersion.outputs.minecraft_version }}-${{ inputs.version_suffix }}"
+            fi
+          else
+            if [ ${{ steps.getVersionOrdering.outputs.uses_mc_version_order_first }} == "true" ] 
+            then
+              current_full_version="${{ steps.getMinecraftVersion.outputs.minecraft_version }}-${{ steps.getModVersion.outputs.version }}"
+              next_full_version="${{ steps.getMinecraftVersion.outputs.minecraft_version }}-${{ steps.getNextModVersion.outputs.version }}"
+            else
+              current_full_version="${{ steps.getModVersion.outputs.version }}-${{ steps.getMinecraftVersion.outputs.minecraft_version }}"
+              next_full_version="${{ steps.getNextModVersion.outputs.version }}-${{ steps.getMinecraftVersion.outputs.minecraft_version }}"
+            fi
+          fi
+          echo "Current full version: ${next_full_version}"
+          echo "Next full version: ${next_full_version}"
+          echo "current_full_version=${current_full_version}" >> "$GITHUB_OUTPUT"
+          echo "next_full_version=${next_full_version}" >> "$GITHUB_OUTPUT"
+
+      - id: generateReleaseName
+        name: "⚙️ Generate release name"
+        run: |
+          release_name="Version ${{ steps.getNextModVersion.outputs.version }} for Minecraft ${{ steps.getMinecraftVersion.outputs.version }}"
+          echo "Release name: $release_name"
+          echo "release_name=$release_name" >> "$GITHUB_OUTPUT"

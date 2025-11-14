@@ -25,6 +25,15 @@ permissions:
   actions: write
 
 jobs:
+  validate-inputs:
+    runs-on: ${{ inputs.image }}
+    if: |
+      (inputs.image == '') ||
+      (inputs.release_yaml_file == '') ||
+      (inputs.branch_pattern == '')
+    steps:
+      - run: exit 1
+
   determine-branches:
     runs-on: ${{ inputs.image }}
     outputs:

@@ -55,6 +55,9 @@ jobs:
       - name: "📦 Checkout"
         uses: actions/checkout@v4
 
+      - name: "📦 Fetch tags" # See https://github.com/actions/checkout/issues/2041
+        run: git fetch --tags
+
       - name: "⚙️ Configure Java"
         run: echo "JAVA_HOME=$(echo $JAVA_HOME_${{ inputs.java }}_X64)" >> "$GITHUB_ENV"
 
@@ -65,7 +68,7 @@ jobs:
           cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
 
       - name: "🚀 Publish"
-        run: ./gradlew --build-cache ${{ inputs.gradle_publish_task }} -Pversion=${{ inputs.version }}
+        run: ./gradlew --build-cache ${{ inputs.gradle_publish_task }} -PmodVersion=${{ inputs.version }}
         env:
           # Github
           GITHUB_USERNAME: ${{ secrets.GITHUB_PUBLISH_USER }}
