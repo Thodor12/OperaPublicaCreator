@@ -100,7 +100,23 @@ jobs:
       - id: generateTagVersion
         name: "Generate tag version"
         run: |
-          tag_version="v${{ steps.generateMinecraftVersion.outputs.minecraft_version }}-${{ steps.generateModVersion.outputs.version }}"
+          if [[ -n "${{inputs.sufix}}" ]]
+          then
+            if [ ${{ steps.getVersionOrdering.outputs.uses_mc_version_order_first }} == "true" ] 
+            then
+              tag_version="${{ steps.generateMinecraftVersion.outputs.minecraft_version }}-${{ steps.generateModVersion.outputs.version }}-${{ inputs.suffix }}"
+            else
+              tag_version="${{ steps.generateModVersion.outputs.version }}-${{ steps.generateMinecraftVersion.outputs.minecraft_version }}-${{ inputs.suffix }}"
+            fi
+          else
+            if [ ${{ steps.getVersionOrdering.outputs.uses_mc_version_order_first }} == "true" ] 
+            then
+              tag_version="${{ steps.generateMinecraftVersion.outputs.minecraft_version }}-${{ steps.generateModVersion.outputs.version }}"
+            else
+              tag_version="${{ steps.generateModVersion.outputs.version }}-${{ steps.generateMinecraftVersion.outputs.minecraft_version }}"
+            fi
+          fi
+          
           echo "Tag version: ${tag_version}"
           echo "tag_version=${tag_version}" >> "$GITHUB_OUTPUT"
 
