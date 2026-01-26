@@ -78,7 +78,7 @@ jobs:
       - id: generateFullVersion
         name: "Generate full version"
         run: |
-          if [[ -n "${{inputs.sufix}}" ]]
+          if [[ -n "${{inputs.suffix}}" ]]
           then
             if [ ${{ steps.getVersionOrdering.outputs.uses_mc_version_order_first }} == "true" ] 
             then
@@ -100,7 +100,7 @@ jobs:
       - id: generateTagVersion
         name: "Generate tag version"
         run: |
-          if [[ -n "${{inputs.sufix}}" ]]
+          if [[ -n "${{inputs.suffix}}" ]]
           then
             tag_version="v${{ steps.generateMinecraftVersion.outputs.minecraft_version }}-${{ steps.generateModVersion.outputs.version }}-${{ inputs.suffix }}"
           else
